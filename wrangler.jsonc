@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "saca",
+  "name": "system-adb-cleaner-assistant",
   "compatibility_date": "2026-09-10",
   "assets": {
     "directory": "./out",
