@@ -85,6 +85,7 @@ function PackageColumn({ title, kind, total, packages, selected, onToggle, onTog
                     checked={isSelected}
                     onChange={() => onToggle(pkg)}
                     onClick={(e) => e.stopPropagation()}
+                    aria-label={`Select ${pkg}`}
                     className="default-checkbox"
                   />
                 </div>
@@ -99,10 +100,8 @@ function PackageColumn({ title, kind, total, packages, selected, onToggle, onTog
         </div>
       ) : (
         <div className="empty-state">
-          <Search size={36} style={{ color: '#9ca3af', marginBottom: '8px' }} />
-          <p className="empty-state-text" style={{ fontWeight: 400, fontSize: '14px', color: '#6b7280', margin: 0 }}>
-            No matching {kind} apps
-          </p>
+          <Search size={36} className="empty-state-icon" />
+          <p className="empty-state-text">No matching {kind} apps</p>
         </div>
       )}
     </section>
@@ -524,7 +523,7 @@ export default function Home() {
       {/* Header */}
       <header className="main-header">
         <div className="logo-container">
-          <h1 className="logo-text">System Adb Cleaner Assistant</h1>
+          <h1 className="logo-text">System ADB Cleaner Assistant</h1>
         </div>
 
         <div className={`device-panel ${device ? 'connected' : currentPane === 'loading' ? 'connecting' : 'disconnected'}`}>
@@ -538,8 +537,10 @@ export default function Home() {
               <span className="device-name">{`${device.brand || ''} ${device.model || ''}`.trim() || 'Unknown'}</span>
               <span className="separator">|</span>
               <span className="device-version">Android {device.androidVersion}</span>
-              <span className="separator">|</span>
-              <span className="device-serial">{device.serial}</span>
+              <span className="device-serial-group">
+                <span className="separator">|</span>{' '}
+                <span className="device-serial">{device.serial}</span>
+              </span>
             </div>
           )}
           {device && <span className="separator">|</span>}
@@ -548,6 +549,7 @@ export default function Home() {
               className="btn-icon" 
               onClick={exportPackagesJson}
               title="Export package list to JSON"
+              aria-label="Export package list to JSON"
             >
               <Download size={16} />
             </button>
@@ -557,6 +559,7 @@ export default function Home() {
               className={`btn-icon ${isRefreshing ? 'spinning' : ''}`} 
               onClick={() => refreshAll(true)}
               title="Refresh connection and package lists"
+              aria-label="Refresh connection and package lists"
             >
               <RefreshCw size={16} />
             </button>
@@ -590,7 +593,7 @@ export default function Home() {
                 {webUsbSupported ? (
                   <button className="btn btn-primary" onClick={handleConnectClick}>Connect Device</button>
                 ) : (
-                  <p style={{ color: '#ef4444', fontWeight: 'bold' }}>WebUSB is not supported in this browser.</p>
+                  <p className="unsupported-note">WebUSB is not supported in this browser.</p>
                 )}
               </div>
             </div>
@@ -626,7 +629,7 @@ export default function Home() {
       {currentPane === 'app-list' && (
         <footer className="footer-toolbar">
           <div className="search-box">
-            <Search size={18} className="search-icon" style={{ color: 'var(--text-muted)' }} />
+            <Search size={18} className="search-icon" />
             <input 
               ref={searchInputRef}
               type="text" 
@@ -636,7 +639,7 @@ export default function Home() {
               autoComplete="off"
             />
             {searchQuery && (
-              <button className="btn-clear" onClick={() => setSearchQuery('')}><X size={16} /></button>
+              <button className="btn-clear" onClick={() => setSearchQuery('')} aria-label="Clear search"><X size={16} /></button>
             )}
           </div>
 
@@ -647,10 +650,10 @@ export default function Home() {
                 {hiddenSelectedCount > 0 && ` (${hiddenSelectedCount} hidden by search)`}
               </span>
               <span className="separator">|</span>
-              <button className="btn-icon" onClick={handleDeselectAll} title="Deselect All">
+              <button className="btn-icon" onClick={handleDeselectAll} title="Deselect All" aria-label="Deselect all">
                 <SquareMinus size={18} />
               </button>
-              <button className="btn-icon" onClick={() => setIsConfirmOpen(true)} title="Uninstall Selected">
+              <button className="btn-icon" onClick={() => setIsConfirmOpen(true)} title="Uninstall Selected" aria-label="Uninstall selected">
                 <Trash2 size={18} />
               </button>
             </div>
@@ -660,15 +663,18 @@ export default function Home() {
 
 
       {/* Confirmation Modal */}
-      <div className={`modal-overlay ${isConfirmOpen ? 'visible' : ''}`}>
-        <div className="modal-card">
+      <div
+        className={`modal-overlay ${isConfirmOpen ? 'visible' : ''}`}
+        onClick={(e) => e.target === e.currentTarget && setIsConfirmOpen(false)}
+      >
+        <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
           <div className="modal-header">
-            <h2>Confirm Uninstallation</h2>
-            <button className="modal-close" onClick={() => setIsConfirmOpen(false)}><X size={20} /></button>
+            <h2 id="confirm-title">Confirm Uninstallation</h2>
+            <button className="modal-close" onClick={() => setIsConfirmOpen(false)} aria-label="Close"><X size={20} /></button>
           </div>
           <div className="modal-body">
-            <div className="warning-banner">
-              <ShieldAlert size={24} style={{ color: '#b45309', flexShrink: 0 }} />
+            <div className="warning-banner with-icon">
+              <ShieldAlert size={24} className="warning-icon" />
               <div className="warning-text">
                 <strong>Warning:</strong> You are about to disable/uninstall system packages. 
                 Removing essential system files could cause device instability or boot loops. Proceed with care.
@@ -691,7 +697,7 @@ export default function Home() {
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary" onClick={() => setIsConfirmOpen(false)}>Cancel</button>
-            <button className="btn btn-danger" onClick={startUninstallation} style={{ background: '#ef4444', color: 'white', marginLeft: '12px' }}>
+            <button className="btn btn-danger" onClick={startUninstallation}>
               Confirm & Uninstall
             </button>
           </div>
@@ -700,9 +706,9 @@ export default function Home() {
 
       {/* Progress & Log Modal */}
       <div className={`modal-overlay ${isProgressOpen ? 'visible' : ''}`}>
-        <div className="modal-card" style={{ maxWidth: '600px' }}>
+        <div className="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="progress-title">
           <div className="modal-header">
-            <h2>{progressTitle}</h2>
+            <h2 id="progress-title">{progressTitle}</h2>
           </div>
           <div className="modal-body">
             
@@ -734,7 +740,6 @@ export default function Home() {
               className="btn btn-primary" 
               onClick={handleProgressDone} 
               disabled={!isProgressDone}
-              style={{ opacity: isProgressDone ? 1 : 0.5, cursor: isProgressDone ? 'pointer' : 'not-allowed' }}
             >
               Close
             </button>
