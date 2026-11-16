@@ -33,7 +33,20 @@ const isCriticalPackage = (pkg) =>
   CRITICAL_PACKAGES.has(pkg) || pkg.startsWith('com.android.providers.');
 
 const noopSubscribe = () => () => {};
-const detectWebUsb = () => !!navigator?.usb;
+const MOBILE_ALERT = {
+  variant: 'error',
+  title: 'Not Supported on Phones',
+  message: 'This tool controls an Android device over a USB cable, so it only works from a computer. Please open this page on a desktop or laptop using Chrome, Edge, Brave, or Opera, then connect your phone with USB Debugging enabled.',
+};
+
+// 'mobile' | 'no-webusb' | 'ok' (primitive snapshot, safe for useSyncExternalStore)
+const detectSupport = () => {
+  const isMobile =
+    navigator.userAgentData?.mobile ??
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  if (isMobile) return 'mobile';
+  return navigator.usb ? 'ok' : 'no-webusb';
+};
 
 const runAdbCommand = (adb, cmd) => adb.subprocess.noneProtocol.spawnWaitText(cmd);
 
@@ -117,7 +130,8 @@ export default function Home() {
   const [alertInfo, setAlertInfo] = useState({ title: '', message: '', variant: 'error' });
   const [loadingText, setLoadingText] = useState('Initializing WebUSB...');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const webUsbSupported = useSyncExternalStore(noopSubscribe, detectWebUsb, () => true);
+  const support = useSyncExternalStore(noopSubscribe, detectSupport, () => 'ok');
+  const webUsbSupported = support === 'ok';
 
   // Modals state
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -354,7 +368,7 @@ export default function Home() {
   }, [webUsbSupported]);
 
   const currentPane = webUsbSupported ? pane : 'alert';
-  const currentAlert = webUsbSupported ? alertInfo : UNSUPPORTED_ALERT;
+  const currentAlert = webUsbSupported ? alertInfo : support === 'mobile' ? MOBILE_ALERT : UNSUPPORTED_ALERT;
 
   const hiddenSelectedCount = Array.from(selectedPackages).filter(
     (pkg) => !pkg.toLowerCase().includes(searchQuery.trim().toLowerCase())
@@ -593,7 +607,9 @@ export default function Home() {
                 {webUsbSupported ? (
                   <button className="btn btn-primary" onClick={handleConnectClick}>Connect Device</button>
                 ) : (
-                  <p className="unsupported-note">WebUSB is not supported in this browser.</p>
+                  <p className="unsupported-note">
+                    {support === 'mobile' ? 'Open this page on a computer to use it.' : 'WebUSB is not supported in this browser.'}
+                  </p>
                 )}
               </div>
             </div>

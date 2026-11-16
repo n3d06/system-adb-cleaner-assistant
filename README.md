@@ -23,7 +23,7 @@ Developed by **3ky4r0**.
 
 ### Prerequisites
 
-1. A Chromium-based browser supporting WebUSB (Google Chrome, Microsoft Edge, Brave, etc.).
+1. A **desktop or laptop** with a Chromium-based browser supporting WebUSB (Google Chrome, Microsoft Edge, Brave, etc.). Phones and tablets are not supported.
 2. Enable **USB Debugging** on your Android device (Settings > Developer Options > USB Debugging).
 3. Connect your Android phone to your computer using a USB cable.
 
