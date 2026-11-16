@@ -516,6 +516,8 @@ body {
 
 .confirm-pkg-item { padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
 .confirm-pkg-item:last-child { border-bottom: none; }
+.confirm-pkg-item.critical { color: #b91c1c; font-weight: 600; }
+.critical-banner { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 
 .progress-bar-container {
   background: #f3f4f6;

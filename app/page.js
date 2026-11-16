@@ -8,6 +8,29 @@ const UNSUPPORTED_ALERT = {
   message: 'Your current browser does not support WebUSB. Please switch to Google Chrome, Microsoft Edge, Opera, or Brave.',
 };
 
+// Packages whose removal commonly breaks the device (boot loops, no UI, no calls/network)
+const CRITICAL_PACKAGES = new Set([
+  'android',
+  'com.android.systemui',
+  'com.android.settings',
+  'com.android.phone',
+  'com.android.server.telecom',
+  'com.android.bluetooth',
+  'com.android.nfc',
+  'com.android.shell',
+  'com.android.packageinstaller',
+  'com.google.android.packageinstaller',
+  'com.android.permissioncontroller',
+  'com.google.android.permissioncontroller',
+  'com.google.android.gms',
+  'com.google.android.gsf',
+  'com.android.vending',
+  'com.android.webview',
+  'com.google.android.webview',
+]);
+const isCriticalPackage = (pkg) =>
+  CRITICAL_PACKAGES.has(pkg) || pkg.startsWith('com.android.providers.');
+
 const noopSubscribe = () => () => {};
 const detectWebUsb = () => !!navigator?.usb;
 
@@ -116,6 +139,8 @@ export default function Home() {
   // Global hotkeys handler
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Ignore hotkeys while the uninstall progress dialog is open
+      if (isProgressOpen) return;
       if (e.key === '/' && document.activeElement !== searchInputRef.current) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -137,7 +162,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isConfirmOpen, searchQuery]);
+  }, [isConfirmOpen, isProgressOpen, searchQuery]);
 
   // Scroll console log to bottom on changes
   useEffect(() => {
@@ -321,6 +346,8 @@ export default function Home() {
 
   const currentPane = webUsbSupported ? pane : 'alert';
   const currentAlert = webUsbSupported ? alertInfo : UNSUPPORTED_ALERT;
+
+  const criticalSelected = Array.from(selectedPackages).filter(isCriticalPackage);
 
   // Filter visible items
   const q = searchQuery.trim().toLowerCase();
@@ -610,10 +637,16 @@ export default function Home() {
                 Removing essential system files could cause device instability or boot loops. Proceed with care.
               </div>
             </div>
+            {criticalSelected.length > 0 && (
+              <div className="warning-banner critical-banner">
+                <strong>Critical packages selected ({criticalSelected.length}):</strong> removing these is
+                very likely to break your device. They are highlighted in red below.
+              </div>
+            )}
             <p>You have selected <strong>{selectedPackages.size}</strong> package(s) for removal:</p>
             <div className="confirm-packages-list">
               {Array.from(selectedPackages).map((pkg) => (
-                <div key={pkg} className="confirm-pkg-item">
+                <div key={pkg} className={`confirm-pkg-item ${isCriticalPackage(pkg) ? 'critical' : ''}`}>
                   <strong>{getFriendlyName(pkg)}</strong> ({pkg})
                 </div>
               ))}
