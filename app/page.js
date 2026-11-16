@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
-import { RefreshCw, Search, X, AlertTriangle, ShieldAlert, Trash2, SquareMinus, Download } from 'lucide-react';
+import { RefreshCw, Search, X, AlertTriangle, ShieldAlert, Trash2, SquareMinus, Download, Usb } from 'lucide-react';
 
 const UNSUPPORTED_ALERT = {
+  variant: 'error',
   title: 'Browser Not Supported',
   message: 'Your current browser does not support WebUSB. Please switch to Google Chrome, Microsoft Edge, Opera, or Brave.',
 };
@@ -53,13 +54,19 @@ const getFriendlyName = (pkgName) => {
   return name.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 };
 
-function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
+function PackageColumn({ title, kind, total, packages, selected, onToggle, onToggleAll }) {
   const [scrolled, setScrolled] = useState(false);
+  const allSelected = packages.length > 0 && packages.every((pkg) => selected.has(pkg));
 
   return (
     <section className={`column-panel ${kind}-column`}>
       <div className={`column-header ${scrolled ? 'scrolled' : ''}`}>
         <h2>{title} <span className="badge">{total}</span></h2>
+        {packages.length > 0 && (
+          <button className="btn-link" onClick={() => onToggleAll(packages, !allSelected)}>
+            {allSelected ? 'Deselect shown' : `Select shown (${packages.length})`}
+          </button>
+        )}
       </div>
 
       {packages.length > 0 ? (
@@ -78,12 +85,14 @@ function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
                     checked={isSelected}
                     onChange={() => onToggle(pkg)}
                     onClick={(e) => e.stopPropagation()}
+                    aria-label={`Select ${pkg}`}
                     className="default-checkbox"
                   />
                 </div>
                 <div className="card-info">
                   <div className="card-pkg-friendly">{getFriendlyName(pkg)}</div>
                   <div className="card-pkg-name" title={pkg}>{pkg}</div>
+                  {isCriticalPackage(pkg) && <span className="critical-tag" title="Removing this may break your device">Critical</span>}
                 </div>
               </div>
             );
@@ -91,10 +100,8 @@ function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
         </div>
       ) : (
         <div className="empty-state">
-          <Search size={36} style={{ color: '#9ca3af', marginBottom: '8px' }} />
-          <p className="empty-state-text" style={{ fontWeight: 400, fontSize: '14px', color: '#6b7280', margin: 0 }}>
-            No matching {kind} apps
-          </p>
+          <Search size={36} className="empty-state-icon" />
+          <p className="empty-state-text">No matching {kind} apps</p>
         </div>
       )}
     </section>
@@ -107,7 +114,7 @@ export default function Home() {
   const [selectedPackages, setSelectedPackages] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [pane, setPane] = useState('loading'); // 'loading', 'alert', 'app-list'
-  const [alertInfo, setAlertInfo] = useState({ title: '', message: '' });
+  const [alertInfo, setAlertInfo] = useState({ title: '', message: '', variant: 'error' });
   const [loadingText, setLoadingText] = useState('Initializing WebUSB...');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const webUsbSupported = useSyncExternalStore(noopSubscribe, detectWebUsb, () => true);
@@ -121,6 +128,7 @@ export default function Home() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressStatus, setProgressStatus] = useState('Preparing...');
   const [successCount, setSuccessCount] = useState(0);
+  const [disabledCount, setDisabledCount] = useState(0);
   const [failCount, setFailCount] = useState(0);
   const [consoleLog, setConsoleLog] = useState([]);
   const [isProgressDone, setIsProgressDone] = useState(false);
@@ -176,8 +184,8 @@ export default function Home() {
     setConsoleLog(prev => [...prev, { text: message, type }]);
   };
 
-  const showConnectionError = (title, message) => {
-    setAlertInfo({ title, message });
+  const showConnectionError = (title, message, variant = 'error') => {
+    setAlertInfo({ title, message, variant });
     setPane('alert');
   };
 
@@ -317,7 +325,8 @@ export default function Home() {
         } else {
           showConnectionError(
             'Connect Android Device',
-            'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.'
+            'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.',
+            'info'
           );
         }
       } catch (e) {
@@ -347,6 +356,9 @@ export default function Home() {
   const currentPane = webUsbSupported ? pane : 'alert';
   const currentAlert = webUsbSupported ? alertInfo : UNSUPPORTED_ALERT;
 
+  const hiddenSelectedCount = Array.from(selectedPackages).filter(
+    (pkg) => !pkg.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  ).length;
   const criticalSelected = Array.from(selectedPackages).filter(isCriticalPackage);
 
   // Filter visible items
@@ -362,6 +374,17 @@ export default function Home() {
         next.delete(pkg);
       } else {
         next.add(pkg);
+      }
+      return next;
+    });
+  };
+
+  const toggleMany = (pkgs, select) => {
+    setSelectedPackages(prev => {
+      const next = new Set(prev);
+      for (const pkg of pkgs) {
+        if (select) next.add(pkg);
+        else next.delete(pkg);
       }
       return next;
     });
@@ -389,6 +412,7 @@ export default function Home() {
     setProgressStatus('Initializing WebUSB...');
     setSuccessCount(0);
     setFailCount(0);
+    setDisabledCount(0);
     setConsoleLog([{ text: 'Establishing secure communication...', type: 'info' }]);
     setIsProgressDone(false);
     setIsProgressOpen(true);
@@ -407,6 +431,7 @@ export default function Home() {
     let completed = 0;
     let localSuccess = 0;
     let localFail = 0;
+    let localDisabled = 0;
 
     for (const pkg of targetPackages) {
       setProgressStatus(`Uninstalling: ${pkg} (${completed + 1}/${targetPackages.length})`);
@@ -422,7 +447,9 @@ export default function Home() {
           logConsole(`[!] Uninstall failed, trying to disable: ${pkg}`, 'info');
           const disableResult = await runAdbCommand(adb, `pm disable-user --user 0 ${pkg}`);
           if (disableResult.toLowerCase().includes('new state')) {
-            logConsole(`[✓] SUCCESS (Disabled): ${pkg}`, 'success');
+            logConsole(`[✓] DISABLED (not removed, can be re-enabled): ${pkg}`, 'success');
+            localDisabled++;
+            setDisabledCount(localDisabled);
             localSuccess++;
             setSuccessCount(localSuccess);
           } else {
@@ -445,7 +472,7 @@ export default function Home() {
     logConsole(`\n========================================`, 'info');
     logConsole(`UNINSTALLATION COMPLETE`, 'info');
     logConsole(`Total Packages: ${targetPackages.length}`, 'info');
-    logConsole(`Succeeded:      ${localSuccess}`, 'success');
+    logConsole(`Succeeded:      ${localSuccess} (${localSuccess - localDisabled} removed, ${localDisabled} disabled only)`, 'success');
     logConsole(`Failed:         ${localFail}`, localFail > 0 ? 'error' : 'info');
     logConsole(`========================================`, 'info');
 
@@ -496,13 +523,13 @@ export default function Home() {
       {/* Header */}
       <header className="main-header">
         <div className="logo-container">
-          <h1 className="logo-text">System Adb Cleaner Assistant</h1>
+          <h1 className="logo-text">System ADB Cleaner Assistant</h1>
         </div>
 
-        <div className={`device-panel ${device ? 'connected' : 'disconnected'}`}>
+        <div className={`device-panel ${device ? 'connected' : currentPane === 'loading' ? 'connecting' : 'disconnected'}`}>
           <div className="status-indicator">
             <span className="pulse-dot"></span>
-            <span className="status-text">{device ? 'Connected' : 'No Device'}</span>
+            <span className="status-text">{device ? 'Connected' : currentPane === 'loading' ? 'Connecting...' : 'No Device'}</span>
           </div>
           {device && <span className="separator">|</span>}
           {device && (
@@ -510,8 +537,10 @@ export default function Home() {
               <span className="device-name">{`${device.brand || ''} ${device.model || ''}`.trim() || 'Unknown'}</span>
               <span className="separator">|</span>
               <span className="device-version">Android {device.androidVersion}</span>
-              <span className="separator">|</span>
-              <span className="device-serial">{device.serial}</span>
+              <span className="device-serial-group">
+                <span className="separator">|</span>{' '}
+                <span className="device-serial">{device.serial}</span>
+              </span>
             </div>
           )}
           {device && <span className="separator">|</span>}
@@ -520,6 +549,7 @@ export default function Home() {
               className="btn-icon" 
               onClick={exportPackagesJson}
               title="Export package list to JSON"
+              aria-label="Export package list to JSON"
             >
               <Download size={16} />
             </button>
@@ -529,6 +559,7 @@ export default function Home() {
               className={`btn-icon ${isRefreshing ? 'spinning' : ''}`} 
               onClick={() => refreshAll(true)}
               title="Refresh connection and package lists"
+              aria-label="Refresh connection and package lists"
             >
               <RefreshCw size={16} />
             </button>
@@ -551,14 +582,18 @@ export default function Home() {
         {currentPane === 'alert' && (
           <section className="alert-pane">
             <div className="alert-card">
-              <AlertTriangle size={48} style={{ color: '#ef4444', marginBottom: '8px' }} />
+              {currentAlert.variant === 'info' ? (
+                <Usb size={48} className="alert-icon info" />
+              ) : (
+                <AlertTriangle size={48} className="alert-icon error" />
+              )}
               <h2>{currentAlert.title}</h2>
               <p>{currentAlert.message}</p>
               <div className="alert-actions">
                 {webUsbSupported ? (
                   <button className="btn btn-primary" onClick={handleConnectClick}>Connect Device</button>
                 ) : (
-                  <p style={{ color: '#ef4444', fontWeight: 'bold' }}>WebUSB is not supported in this browser.</p>
+                  <p className="unsupported-note">WebUSB is not supported in this browser.</p>
                 )}
               </div>
             </div>
@@ -575,6 +610,7 @@ export default function Home() {
               packages={visibleSystemPackages}
               selected={selectedPackages}
               onToggle={togglePackage}
+              onToggleAll={toggleMany}
             />
             <PackageColumn
               title="User Apps"
@@ -583,6 +619,7 @@ export default function Home() {
               packages={visibleUserPackages}
               selected={selectedPackages}
               onToggle={togglePackage}
+              onToggleAll={toggleMany}
             />
           </div>
         )}
@@ -592,7 +629,7 @@ export default function Home() {
       {currentPane === 'app-list' && (
         <footer className="footer-toolbar">
           <div className="search-box">
-            <Search size={18} className="search-icon" style={{ color: 'var(--text-muted)' }} />
+            <Search size={18} className="search-icon" />
             <input 
               ref={searchInputRef}
               type="text" 
@@ -602,18 +639,21 @@ export default function Home() {
               autoComplete="off"
             />
             {searchQuery && (
-              <button className="btn-clear" onClick={() => setSearchQuery('')}><X size={16} /></button>
+              <button className="btn-clear" onClick={() => setSearchQuery('')} aria-label="Clear search"><X size={16} /></button>
             )}
           </div>
 
           {selectedPackages.size > 0 && (
             <div className="header-selection-bar">
-              <span className="selection-count"><strong>{selectedPackages.size}</strong> selected</span>
+              <span className="selection-count">
+                <strong>{selectedPackages.size}</strong> selected
+                {hiddenSelectedCount > 0 && ` (${hiddenSelectedCount} hidden by search)`}
+              </span>
               <span className="separator">|</span>
-              <button className="btn-icon" onClick={handleDeselectAll} title="Deselect All">
+              <button className="btn-icon" onClick={handleDeselectAll} title="Deselect All" aria-label="Deselect all">
                 <SquareMinus size={18} />
               </button>
-              <button className="btn-icon" onClick={() => setIsConfirmOpen(true)} title="Uninstall Selected">
+              <button className="btn-icon" onClick={() => setIsConfirmOpen(true)} title="Uninstall Selected" aria-label="Uninstall selected">
                 <Trash2 size={18} />
               </button>
             </div>
@@ -623,15 +663,18 @@ export default function Home() {
 
 
       {/* Confirmation Modal */}
-      <div className={`modal-overlay ${isConfirmOpen ? 'visible' : ''}`}>
-        <div className="modal-card">
+      <div
+        className={`modal-overlay ${isConfirmOpen ? 'visible' : ''}`}
+        onClick={(e) => e.target === e.currentTarget && setIsConfirmOpen(false)}
+      >
+        <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
           <div className="modal-header">
-            <h2>Confirm Uninstallation</h2>
-            <button className="modal-close" onClick={() => setIsConfirmOpen(false)}><X size={20} /></button>
+            <h2 id="confirm-title">Confirm Uninstallation</h2>
+            <button className="modal-close" onClick={() => setIsConfirmOpen(false)} aria-label="Close"><X size={20} /></button>
           </div>
           <div className="modal-body">
-            <div className="warning-banner">
-              <ShieldAlert size={24} style={{ color: '#b45309', flexShrink: 0 }} />
+            <div className="warning-banner with-icon">
+              <ShieldAlert size={24} className="warning-icon" />
               <div className="warning-text">
                 <strong>Warning:</strong> You are about to disable/uninstall system packages. 
                 Removing essential system files could cause device instability or boot loops. Proceed with care.
@@ -654,7 +697,7 @@ export default function Home() {
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary" onClick={() => setIsConfirmOpen(false)}>Cancel</button>
-            <button className="btn btn-danger" onClick={startUninstallation} style={{ background: '#ef4444', color: 'white', marginLeft: '12px' }}>
+            <button className="btn btn-danger" onClick={startUninstallation}>
               Confirm & Uninstall
             </button>
           </div>
@@ -663,9 +706,9 @@ export default function Home() {
 
       {/* Progress & Log Modal */}
       <div className={`modal-overlay ${isProgressOpen ? 'visible' : ''}`}>
-        <div className="modal-card" style={{ maxWidth: '600px' }}>
+        <div className="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="progress-title">
           <div className="modal-header">
-            <h2>{progressTitle}</h2>
+            <h2 id="progress-title">{progressTitle}</h2>
           </div>
           <div className="modal-body">
             
@@ -677,7 +720,7 @@ export default function Home() {
             <div className="progress-status-container">
               <div className="progress-status">{progressStatus}</div>
               <div className="progress-stats-summary">
-                <span className="stat-success">✓ {successCount} Succeeded</span>
+                <span className="stat-success">✓ {successCount} Succeeded{disabledCount > 0 && ` (${disabledCount} disabled only)`}</span>
                 <span className="stat-separator">|</span>
                 <span className="stat-fail">✗ {failCount} Failed</span>
               </div>
@@ -697,7 +740,6 @@ export default function Home() {
               className="btn btn-primary" 
               onClick={handleProgressDone} 
               disabled={!isProgressDone}
-              style={{ opacity: isProgressDone ? 1 : 0.5, cursor: isProgressDone ? 'pointer' : 'not-allowed' }}
             >
               Close
             </button>

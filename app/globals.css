@@ -10,6 +10,7 @@ body {
   background: #e5e7eb;
   color: #1f2937;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -30,7 +31,7 @@ body {
   min-height: 0;
 }
 
-.main-header, .list-actions-bar {
+.main-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -68,13 +69,6 @@ body {
   padding: 4px 0;
 }
 
-.logo-badge {
-  font-size: 10px;
-  background: #e5e7eb;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
 .device-panel {
   display: flex;
   align-items: center;
@@ -82,6 +76,8 @@ body {
   background: transparent;
   padding: 0;
   font-size: 13px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .status-indicator {
@@ -90,19 +86,19 @@ body {
   gap: 6px;
 }
 
-.header-divider {
-  width: 1px;
-  height: 18px;
-  background: #d1d5db;
-  flex-shrink: 0;
-  margin: 0 4px;
-}
-
 .device-details {
   display: flex;
   align-items: center;
   gap: 12px;
   color: #4b5563;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .device-serial-group { display: none; }
+  .search-box { max-width: none; }
+  .footer-toolbar { flex-wrap: wrap; height: auto; }
 }
 
 .separator {
@@ -218,6 +214,10 @@ body {
 }
 
 .column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-bottom: 12px;
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s;
@@ -269,14 +269,16 @@ body {
   text-align: center;
 }
 
-.empty-state h3,
-.empty-state p,
+.empty-state-icon {
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+
 .empty-state-text {
-  font-size: 14px !important;
-  font-weight: 400 !important;
-  font-weight: normal !important;
-  color: #6b7280 !important;
-  margin: 0 !important;
+  font-size: 14px;
+  font-weight: 400;
+  color: #6b7280;
+  margin: 0;
 }
 
 .system-column .package-list {
@@ -413,8 +415,6 @@ body {
   white-space: nowrap;
 }
 
-.card-badge { display: none; }
-
 .header-selection-bar {
   display: flex;
   align-items: center;
@@ -437,6 +437,22 @@ body {
   cursor: pointer;
   font-weight: 600;
 }
+
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:focus-visible,
+.btn-icon:focus-visible,
+.btn-clear:focus-visible,
+.btn-link:focus-visible,
+.modal-close:focus-visible,
+.default-checkbox:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.search-box:focus-within { box-shadow: 0 0 0 2px #2563eb; }
+.package-card:focus-within { outline: 2px solid #2563eb; outline-offset: -2px; }
+
+.unsupported-note { color: #ef4444; font-weight: bold; }
 
 .btn-secondary { background: #e5e7eb; color: #1f2937; }
 .btn-danger { background: #ef4444; color: white; }
@@ -463,7 +479,18 @@ body {
   padding: 24px;
   max-width: 520px;
   width: 90%;
+  max-height: 90vh;
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 15px 30px rgba(0,0,0,0.08);
+}
+
+.modal-card-wide { max-width: 600px; }
+
+.modal-body {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal-header, .modal-footer {
@@ -503,6 +530,14 @@ body {
   font-size: 13px;
   margin-bottom: 12px;
 }
+
+.warning-banner.with-icon {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.warning-icon { color: #b45309; flex-shrink: 0; }
 
 .confirm-packages-list {
   max-height: 160px;
@@ -607,8 +642,6 @@ body {
   color: #6b7280;
 }
 
-.hidden { display: none !important; }
-
 .spinner {
   width: 32px; height: 32px;
   border: 3px solid #e5e7eb;
@@ -619,6 +652,35 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Status / alert variants */
+.connecting .pulse-dot { background: #f59e0b; }
+.alert-icon { margin-bottom: 8px; }
+.alert-icon.error { color: #ef4444; }
+.alert-icon.info { color: #6b7280; }
+
+/* Column header actions */
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.btn-link:hover { color: #1f2937; }
+
+.critical-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #b91c1c;
+  background: #fee2e2;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
 
 /* Global Windows 11 style thin scrollbars */
 ::-webkit-scrollbar {
