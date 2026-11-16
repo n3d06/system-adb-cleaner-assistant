@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
-import { RefreshCw, Search, X, AlertTriangle, ShieldAlert, Trash2, SquareMinus, Download } from 'lucide-react';
+import { RefreshCw, Search, X, AlertTriangle, ShieldAlert, Trash2, SquareMinus, Download, Usb } from 'lucide-react';
 
 const UNSUPPORTED_ALERT = {
+  variant: 'error',
   title: 'Browser Not Supported',
   message: 'Your current browser does not support WebUSB. Please switch to Google Chrome, Microsoft Edge, Opera, or Brave.',
 };
@@ -53,13 +54,19 @@ const getFriendlyName = (pkgName) => {
   return name.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 };
 
-function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
+function PackageColumn({ title, kind, total, packages, selected, onToggle, onToggleAll }) {
   const [scrolled, setScrolled] = useState(false);
+  const allSelected = packages.length > 0 && packages.every((pkg) => selected.has(pkg));
 
   return (
     <section className={`column-panel ${kind}-column`}>
       <div className={`column-header ${scrolled ? 'scrolled' : ''}`}>
         <h2>{title} <span className="badge">{total}</span></h2>
+        {packages.length > 0 && (
+          <button className="btn-link" onClick={() => onToggleAll(packages, !allSelected)}>
+            {allSelected ? 'Deselect shown' : `Select shown (${packages.length})`}
+          </button>
+        )}
       </div>
 
       {packages.length > 0 ? (
@@ -84,6 +91,7 @@ function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
                 <div className="card-info">
                   <div className="card-pkg-friendly">{getFriendlyName(pkg)}</div>
                   <div className="card-pkg-name" title={pkg}>{pkg}</div>
+                  {isCriticalPackage(pkg) && <span className="critical-tag" title="Removing this may break your device">Critical</span>}
                 </div>
               </div>
             );
@@ -107,7 +115,7 @@ export default function Home() {
   const [selectedPackages, setSelectedPackages] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [pane, setPane] = useState('loading'); // 'loading', 'alert', 'app-list'
-  const [alertInfo, setAlertInfo] = useState({ title: '', message: '' });
+  const [alertInfo, setAlertInfo] = useState({ title: '', message: '', variant: 'error' });
   const [loadingText, setLoadingText] = useState('Initializing WebUSB...');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const webUsbSupported = useSyncExternalStore(noopSubscribe, detectWebUsb, () => true);
@@ -121,6 +129,7 @@ export default function Home() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressStatus, setProgressStatus] = useState('Preparing...');
   const [successCount, setSuccessCount] = useState(0);
+  const [disabledCount, setDisabledCount] = useState(0);
   const [failCount, setFailCount] = useState(0);
   const [consoleLog, setConsoleLog] = useState([]);
   const [isProgressDone, setIsProgressDone] = useState(false);
@@ -176,8 +185,8 @@ export default function Home() {
     setConsoleLog(prev => [...prev, { text: message, type }]);
   };
 
-  const showConnectionError = (title, message) => {
-    setAlertInfo({ title, message });
+  const showConnectionError = (title, message, variant = 'error') => {
+    setAlertInfo({ title, message, variant });
     setPane('alert');
   };
 
@@ -317,7 +326,8 @@ export default function Home() {
         } else {
           showConnectionError(
             'Connect Android Device',
-            'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.'
+            'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.',
+            'info'
           );
         }
       } catch (e) {
@@ -347,6 +357,9 @@ export default function Home() {
   const currentPane = webUsbSupported ? pane : 'alert';
   const currentAlert = webUsbSupported ? alertInfo : UNSUPPORTED_ALERT;
 
+  const hiddenSelectedCount = Array.from(selectedPackages).filter(
+    (pkg) => !pkg.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  ).length;
   const criticalSelected = Array.from(selectedPackages).filter(isCriticalPackage);
 
   // Filter visible items
@@ -362,6 +375,17 @@ export default function Home() {
         next.delete(pkg);
       } else {
         next.add(pkg);
+      }
+      return next;
+    });
+  };
+
+  const toggleMany = (pkgs, select) => {
+    setSelectedPackages(prev => {
+      const next = new Set(prev);
+      for (const pkg of pkgs) {
+        if (select) next.add(pkg);
+        else next.delete(pkg);
       }
       return next;
     });
@@ -389,6 +413,7 @@ export default function Home() {
     setProgressStatus('Initializing WebUSB...');
     setSuccessCount(0);
     setFailCount(0);
+    setDisabledCount(0);
     setConsoleLog([{ text: 'Establishing secure communication...', type: 'info' }]);
     setIsProgressDone(false);
     setIsProgressOpen(true);
@@ -407,6 +432,7 @@ export default function Home() {
     let completed = 0;
     let localSuccess = 0;
     let localFail = 0;
+    let localDisabled = 0;
 
     for (const pkg of targetPackages) {
       setProgressStatus(`Uninstalling: ${pkg} (${completed + 1}/${targetPackages.length})`);
@@ -422,7 +448,9 @@ export default function Home() {
           logConsole(`[!] Uninstall failed, trying to disable: ${pkg}`, 'info');
           const disableResult = await runAdbCommand(adb, `pm disable-user --user 0 ${pkg}`);
           if (disableResult.toLowerCase().includes('new state')) {
-            logConsole(`[✓] SUCCESS (Disabled): ${pkg}`, 'success');
+            logConsole(`[✓] DISABLED (not removed, can be re-enabled): ${pkg}`, 'success');
+            localDisabled++;
+            setDisabledCount(localDisabled);
             localSuccess++;
             setSuccessCount(localSuccess);
           } else {
@@ -445,7 +473,7 @@ export default function Home() {
     logConsole(`\n========================================`, 'info');
     logConsole(`UNINSTALLATION COMPLETE`, 'info');
     logConsole(`Total Packages: ${targetPackages.length}`, 'info');
-    logConsole(`Succeeded:      ${localSuccess}`, 'success');
+    logConsole(`Succeeded:      ${localSuccess} (${localSuccess - localDisabled} removed, ${localDisabled} disabled only)`, 'success');
     logConsole(`Failed:         ${localFail}`, localFail > 0 ? 'error' : 'info');
     logConsole(`========================================`, 'info');
 
@@ -499,10 +527,10 @@ export default function Home() {
           <h1 className="logo-text">System Adb Cleaner Assistant</h1>
         </div>
 
-        <div className={`device-panel ${device ? 'connected' : 'disconnected'}`}>
+        <div className={`device-panel ${device ? 'connected' : currentPane === 'loading' ? 'connecting' : 'disconnected'}`}>
           <div className="status-indicator">
             <span className="pulse-dot"></span>
-            <span className="status-text">{device ? 'Connected' : 'No Device'}</span>
+            <span className="status-text">{device ? 'Connected' : currentPane === 'loading' ? 'Connecting...' : 'No Device'}</span>
           </div>
           {device && <span className="separator">|</span>}
           {device && (
@@ -551,7 +579,11 @@ export default function Home() {
         {currentPane === 'alert' && (
           <section className="alert-pane">
             <div className="alert-card">
-              <AlertTriangle size={48} style={{ color: '#ef4444', marginBottom: '8px' }} />
+              {currentAlert.variant === 'info' ? (
+                <Usb size={48} className="alert-icon info" />
+              ) : (
+                <AlertTriangle size={48} className="alert-icon error" />
+              )}
               <h2>{currentAlert.title}</h2>
               <p>{currentAlert.message}</p>
               <div className="alert-actions">
@@ -575,6 +607,7 @@ export default function Home() {
               packages={visibleSystemPackages}
               selected={selectedPackages}
               onToggle={togglePackage}
+              onToggleAll={toggleMany}
             />
             <PackageColumn
               title="User Apps"
@@ -583,6 +616,7 @@ export default function Home() {
               packages={visibleUserPackages}
               selected={selectedPackages}
               onToggle={togglePackage}
+              onToggleAll={toggleMany}
             />
           </div>
         )}
@@ -608,7 +642,10 @@ export default function Home() {
 
           {selectedPackages.size > 0 && (
             <div className="header-selection-bar">
-              <span className="selection-count"><strong>{selectedPackages.size}</strong> selected</span>
+              <span className="selection-count">
+                <strong>{selectedPackages.size}</strong> selected
+                {hiddenSelectedCount > 0 && ` (${hiddenSelectedCount} hidden by search)`}
+              </span>
               <span className="separator">|</span>
               <button className="btn-icon" onClick={handleDeselectAll} title="Deselect All">
                 <SquareMinus size={18} />
@@ -677,7 +714,7 @@ export default function Home() {
             <div className="progress-status-container">
               <div className="progress-status">{progressStatus}</div>
               <div className="progress-stats-summary">
-                <span className="stat-success">✓ {successCount} Succeeded</span>
+                <span className="stat-success">✓ {successCount} Succeeded{disabledCount > 0 && ` (${disabledCount} disabled only)`}</span>
                 <span className="stat-separator">|</span>
                 <span className="stat-fail">✗ {failCount} Failed</span>
               </div>
