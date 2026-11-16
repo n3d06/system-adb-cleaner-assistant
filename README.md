@@ -11,9 +11,9 @@ Developed by **3ky4r0**.
 - 🔌 **WebUSB Connection**: Connect directly to your Android device from any Chromium-based browser (Chrome, Edge, Brave, Opera) without needing manual ADB command-line setups.
 - 📦 **Package Management**:
   - Distinguishes between **System Apps** and **User Apps**.
-  - Search packages by package name or app name in real-time.
+  - Search packages by package name in real-time.
   - Multi-select packages with batch uninstall capabilities.
-  - Safety warnings for system critical packages.
+  - Safety warnings for system critical packages (highlighted in the confirmation dialog).
 - 💾 **Export List**: Export package lists to JSON for backup or auditing.
 - ⚡ **Lightweight & Fast**: Built with Next.js and optimized for static export.
 

@@ -1,7 +1,105 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { RefreshCw, Search, X, AlertTriangle, ShieldAlert, Trash2, SquareMinus, Download } from 'lucide-react';
+
+const UNSUPPORTED_ALERT = {
+  title: 'Browser Not Supported',
+  message: 'Your current browser does not support WebUSB. Please switch to Google Chrome, Microsoft Edge, Opera, or Brave.',
+};
+
+// Packages whose removal commonly breaks the device (boot loops, no UI, no calls/network)
+const CRITICAL_PACKAGES = new Set([
+  'android',
+  'com.android.systemui',
+  'com.android.settings',
+  'com.android.phone',
+  'com.android.server.telecom',
+  'com.android.bluetooth',
+  'com.android.nfc',
+  'com.android.shell',
+  'com.android.packageinstaller',
+  'com.google.android.packageinstaller',
+  'com.android.permissioncontroller',
+  'com.google.android.permissioncontroller',
+  'com.google.android.gms',
+  'com.google.android.gsf',
+  'com.android.vending',
+  'com.android.webview',
+  'com.google.android.webview',
+]);
+const isCriticalPackage = (pkg) =>
+  CRITICAL_PACKAGES.has(pkg) || pkg.startsWith('com.android.providers.');
+
+const noopSubscribe = () => () => {};
+const detectWebUsb = () => !!navigator?.usb;
+
+const runAdbCommand = (adb, cmd) => adb.subprocess.noneProtocol.spawnWaitText(cmd);
+
+const parsePackages = (raw) =>
+  raw
+    .split(/[\r\n]+/)
+    .map((l) => l.replace('package:', '').trim())
+    .filter(Boolean)
+    .sort();
+
+// Human-friendly package name formatter (heuristic, derived from the package id)
+const getFriendlyName = (pkgName) => {
+  const parts = pkgName.split('.');
+  if (parts.length < 2) return pkgName;
+  const last = parts[parts.length - 1];
+  const prev = parts[parts.length - 2];
+  const name = ['android', 'google', 'sec', 'samsung', 'huawei', 'xiaomi', 'miui'].includes(last) ? prev : last;
+  return name.split('_').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+};
+
+function PackageColumn({ title, kind, total, packages, selected, onToggle }) {
+  const [scrolled, setScrolled] = useState(false);
+
+  return (
+    <section className={`column-panel ${kind}-column`}>
+      <div className={`column-header ${scrolled ? 'scrolled' : ''}`}>
+        <h2>{title} <span className="badge">{total}</span></h2>
+      </div>
+
+      {packages.length > 0 ? (
+        <div className="package-list" onScroll={(e) => setScrolled(e.target.scrollTop > 0)}>
+          {packages.map((pkg) => {
+            const isSelected = selected.has(pkg);
+            return (
+              <div
+                key={pkg}
+                className={`package-card ${isSelected ? 'selected' : ''} ${kind}-app`}
+                onClick={() => onToggle(pkg)}
+              >
+                <div className="card-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggle(pkg)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="default-checkbox"
+                  />
+                </div>
+                <div className="card-info">
+                  <div className="card-pkg-friendly">{getFriendlyName(pkg)}</div>
+                  <div className="card-pkg-name" title={pkg}>{pkg}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <Search size={36} style={{ color: '#9ca3af', marginBottom: '8px' }} />
+          <p className="empty-state-text" style={{ fontWeight: 400, fontSize: '14px', color: '#6b7280', margin: 0 }}>
+            No matching {kind} apps
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export default function Home() {
   const [device, setDevice] = useState(null);
@@ -12,9 +110,7 @@ export default function Home() {
   const [alertInfo, setAlertInfo] = useState({ title: '', message: '' });
   const [loadingText, setLoadingText] = useState('Initializing WebUSB...');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [systemScrolled, setSystemScrolled] = useState(false);
-  const [userScrolled, setUserScrolled] = useState(false);
-  const [webUsbSupported, setWebUsbSupported] = useState(true);
+  const webUsbSupported = useSyncExternalStore(noopSubscribe, detectWebUsb, () => true);
 
   // Modals state
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -32,6 +128,7 @@ export default function Home() {
   const searchInputRef = useRef(null);
   const consoleLogRef = useRef(null);
   const adbRef = useRef(null);
+  const connectingRef = useRef(false);
 
   // Keep device ref updated to avoid stale closure in events
   const deviceRef = useRef(device);
@@ -39,60 +136,11 @@ export default function Home() {
     deviceRef.current = device;
   }, [device]);
 
-  // Initial load and connection scanner
-  useEffect(() => {
-    const isSupported = typeof window !== 'undefined' && !!(navigator && navigator.usb);
-    setWebUsbSupported(isSupported);
-
-    if (isSupported) {
-      const scanDevices = async () => {
-        try {
-          const { AdbDaemonWebUsbDeviceManager } = await import('@yume-chan/adb-daemon-webusb');
-          const pairedDevices = await AdbDaemonWebUsbDeviceManager.BROWSER.getDevices();
-          if (pairedDevices.length > 0) {
-            logConsole('Auto-reconnecting to paired device...', 'info');
-            await connectToDevice(pairedDevices[0]);
-          } else {
-            setPane('alert');
-            setAlertInfo({
-              title: 'Connect Android Device',
-              message: 'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.'
-            });
-          }
-        } catch (e) {
-          console.error('Scan paired devices failed', e);
-          showConnectionError('Scan Failed', 'Could not scan for connected USB devices.');
-        }
-      };
-      scanDevices();
-
-      // Listen for browser device disconnections
-      const handleDisconnect = (event) => {
-        if (deviceRef.current && event.device.serialNumber === deviceRef.current.serial) {
-          setDevice(null);
-          setPackages({ system: [], user: [] });
-          setSelectedPackages(new Set());
-          adbRef.current = null;
-          showConnectionError('Device Disconnected', 'USB connection to your device was lost.');
-        }
-      };
-
-      navigator.usb.addEventListener('disconnect', handleDisconnect);
-      return () => {
-        navigator.usb.removeEventListener('disconnect', handleDisconnect);
-      };
-    } else {
-      setPane('alert');
-      setAlertInfo({
-        title: 'Browser Not Supported',
-        message: 'Your current browser does not support WebUSB. Please switch to Google Chrome, Microsoft Edge, Opera, or Brave.'
-      });
-    }
-  }, []);
-
   // Global hotkeys handler
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Ignore hotkeys while the uninstall progress dialog is open
+      if (isProgressOpen) return;
       if (e.key === '/' && document.activeElement !== searchInputRef.current) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -114,7 +162,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isConfirmOpen, searchQuery]);
+  }, [isConfirmOpen, isProgressOpen, searchQuery]);
 
   // Scroll console log to bottom on changes
   useEffect(() => {
@@ -123,14 +171,14 @@ export default function Home() {
     }
   }, [consoleLog]);
 
+  // Log to progress console
+  const logConsole = (message, type = 'info') => {
+    setConsoleLog(prev => [...prev, { text: message, type }]);
+  };
+
   const showConnectionError = (title, message) => {
     setAlertInfo({ title, message });
     setPane('alert');
-  };
-
-  // Helper to execute shell command and read stdout
-  const runAdbCommand = async (adb, cmd) => {
-    return await adb.subprocess.noneProtocol.spawnWaitText(cmd);
   };
 
   const loadPackages = async (adbInstance) => {
@@ -141,15 +189,8 @@ export default function Home() {
       setLoadingText('Loading user packages...');
       const userRaw = await runAdbCommand(adbInstance, 'pm list packages -3 --user 0');
 
-      const parse = (raw) =>
-        raw
-          .split(/[\r\n]+/)
-          .map(l => l.replace('package:', '').trim())
-          .filter(Boolean)
-          .sort();
-
-      const sysPkgs = parse(sysRaw);
-      const userPkgs = parse(userRaw);
+      const sysPkgs = parsePackages(sysRaw);
+      const userPkgs = parsePackages(userRaw);
 
       setPackages({ system: sysPkgs, user: userPkgs });
 
@@ -173,11 +214,13 @@ export default function Home() {
   };
 
   const connectToDevice = async (usbDevice) => {
+    // Prevent concurrent connects (double click, React StrictMode double effect)
+    if (connectingRef.current) return;
+    connectingRef.current = true;
     setPane('loading');
     setLoadingText('Connecting and authenticating with device...');
     try {
-      const { Adb } = await import('@yume-chan/adb');
-      const { AdbDaemonTransport } = await import('@yume-chan/adb');
+      const { Adb, AdbDaemonTransport } = await import('@yume-chan/adb');
       const { default: AdbWebCredentialStore } = await import('@yume-chan/adb-credential-web');
 
       const connection = await usbDevice.connect();
@@ -221,6 +264,8 @@ export default function Home() {
       }
       
       showConnectionError(errTitle, errMsg);
+    } finally {
+      connectingRef.current = false;
     }
   };
 
@@ -258,6 +303,52 @@ export default function Home() {
     }
   };
 
+  // Initial load: auto-reconnect to a previously paired device
+  useEffect(() => {
+    if (!webUsbSupported) return;
+
+    const scanDevices = async () => {
+      try {
+        const { AdbDaemonWebUsbDeviceManager } = await import('@yume-chan/adb-daemon-webusb');
+        const pairedDevices = await AdbDaemonWebUsbDeviceManager.BROWSER.getDevices();
+        if (pairedDevices.length > 0) {
+          logConsole('Auto-reconnecting to paired device...', 'info');
+          await connectToDevice(pairedDevices[0]);
+        } else {
+          showConnectionError(
+            'Connect Android Device',
+            'Please connect your device via USB cable, enable USB Debugging, then click Connect Device.'
+          );
+        }
+      } catch (e) {
+        console.error('Scan paired devices failed', e);
+        showConnectionError('Scan Failed', 'Could not scan for connected USB devices.');
+      }
+    };
+    scanDevices();
+
+    // Listen for browser device disconnections
+    const handleDisconnect = (event) => {
+      if (deviceRef.current && event.device.serialNumber === deviceRef.current.serial) {
+        setDevice(null);
+        setPackages({ system: [], user: [] });
+        setSelectedPackages(new Set());
+        adbRef.current = null;
+        showConnectionError('Device Disconnected', 'USB connection to your device was lost.');
+      }
+    };
+
+    navigator.usb.addEventListener('disconnect', handleDisconnect);
+    return () => navigator.usb.removeEventListener('disconnect', handleDisconnect);
+    // Run once on mount; the handlers only use setState and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webUsbSupported]);
+
+  const currentPane = webUsbSupported ? pane : 'alert';
+  const currentAlert = webUsbSupported ? alertInfo : UNSUPPORTED_ALERT;
+
+  const criticalSelected = Array.from(selectedPackages).filter(isCriticalPackage);
+
   // Filter visible items
   const q = searchQuery.trim().toLowerCase();
   const visibleSystemPackages = packages.system.filter(pkg => pkg.toLowerCase().includes(q));
@@ -278,26 +369,6 @@ export default function Home() {
 
   const handleDeselectAll = () => {
     setSelectedPackages(new Set());
-  };
-
-  // Human-friendly package name formatter
-  const getFriendlyName = (pkgName) => {
-    const parts = pkgName.split('.');
-    if (parts.length >= 2) {
-      const last = parts[parts.length - 1];
-      const prev = parts[parts.length - 2];
-      let name = last;
-      if (['android', 'google', 'sec', 'samsung', 'huawei', 'xiaomi', 'miui'].includes(last)) {
-        name = prev;
-      }
-      return name.split('_').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-    }
-    return pkgName;
-  };
-
-  // Log to progress console
-  const logConsole = (message, type = 'info') => {
-    setConsoleLog(prev => [...prev, { text: message, type }]);
   };
 
   const handleProgressDone = () => {
@@ -420,9 +491,6 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-
-
-
   return (
     <div className="app-container">
       {/* Header */}
@@ -472,7 +540,7 @@ export default function Home() {
       <main className="main-content">
 
         {/* Loading Pane */}
-        {pane === 'loading' && (
+        {currentPane === 'loading' && (
           <section className="loading-pane">
             <div className="spinner"></div>
             <p>{loadingText}</p>
@@ -480,12 +548,12 @@ export default function Home() {
         )}
 
         {/* Device Alert Pane */}
-        {pane === 'alert' && (
+        {currentPane === 'alert' && (
           <section className="alert-pane">
             <div className="alert-card">
               <AlertTriangle size={48} style={{ color: '#ef4444', marginBottom: '8px' }} />
-              <h2>{alertInfo.title}</h2>
-              <p>{alertInfo.message}</p>
+              <h2>{currentAlert.title}</h2>
+              <p>{currentAlert.message}</p>
               <div className="alert-actions">
                 {webUsbSupported ? (
                   <button className="btn btn-primary" onClick={handleConnectClick}>Connect Device</button>
@@ -498,99 +566,30 @@ export default function Home() {
         )}
 
         {/* Split Pane View */}
-        {pane === 'app-list' && (
+        {currentPane === 'app-list' && (
           <div className="split-container">
-            {/* System Apps Column */}
-            <section className="column-panel system-column">
-              <div className={`column-header ${systemScrolled ? 'scrolled' : ''}`}>
-                <h2>System Apps <span className="badge">{packages.system.length}</span></h2>
-              </div>
-
-              {visibleSystemPackages.length > 0 ? (
-                <div className="package-list" onScroll={(e) => setSystemScrolled(e.target.scrollTop > 0)}>
-                  {visibleSystemPackages.map((pkg) => {
-                    const isSelected = selectedPackages.has(pkg);
-                    return (
-                      <div 
-                        key={pkg}
-                        className={`package-card ${isSelected ? 'selected' : ''} system-app`}
-                        onClick={() => togglePackage(pkg)}
-                      >
-                        <div className="card-checkbox">
-                          <input 
-                            type="checkbox" 
-                            checked={isSelected}
-                            onChange={() => togglePackage(pkg)}
-                            onClick={e => e.stopPropagation()}
-                            className="default-checkbox"
-                          />
-                        </div>
-                        <div className="card-info">
-                          <div className="card-pkg-friendly">{getFriendlyName(pkg)}</div>
-                          <div className="card-pkg-name" title={pkg}>{pkg}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <Search size={36} style={{ color: '#9ca3af', marginBottom: '8px' }} />
-                  <p className="empty-state-text" style={{ fontWeight: 400, fontSize: '14px', color: '#6b7280', margin: 0 }}>
-                    No matching system apps
-                  </p>
-                </div>
-              )}
-            </section>
-
-            {/* User Apps Column */}
-            <section className="column-panel user-column">
-              <div className={`column-header ${userScrolled ? 'scrolled' : ''}`}>
-                <h2>User Apps <span className="badge">{packages.user.length}</span></h2>
-              </div>
-
-              {visibleUserPackages.length > 0 ? (
-                <div className="package-list" onScroll={(e) => setUserScrolled(e.target.scrollTop > 0)}>
-                  {visibleUserPackages.map((pkg) => {
-                    const isSelected = selectedPackages.has(pkg);
-                    return (
-                      <div 
-                        key={pkg}
-                        className={`package-card ${isSelected ? 'selected' : ''} user-app`}
-                        onClick={() => togglePackage(pkg)}
-                      >
-                        <div className="card-checkbox">
-                          <input 
-                            type="checkbox" 
-                            checked={isSelected}
-                            onChange={() => togglePackage(pkg)}
-                            onClick={e => e.stopPropagation()}
-                            className="default-checkbox"
-                          />
-                        </div>
-                        <div className="card-info">
-                          <div className="card-pkg-friendly">{getFriendlyName(pkg)}</div>
-                          <div className="card-pkg-name" title={pkg}>{pkg}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <Search size={36} style={{ color: '#9ca3af', marginBottom: '8px' }} />
-                  <p className="empty-state-text" style={{ fontWeight: 400, fontSize: '14px', color: '#6b7280', margin: 0 }}>
-                    No matching user apps
-                  </p>
-                </div>
-              )}
-            </section>
+            <PackageColumn
+              title="System Apps"
+              kind="system"
+              total={packages.system.length}
+              packages={visibleSystemPackages}
+              selected={selectedPackages}
+              onToggle={togglePackage}
+            />
+            <PackageColumn
+              title="User Apps"
+              kind="user"
+              total={packages.user.length}
+              packages={visibleUserPackages}
+              selected={selectedPackages}
+              onToggle={togglePackage}
+            />
           </div>
         )}
       </main>
 
       {/* Footer Toolbar */}
-      {pane === 'app-list' && (
+      {currentPane === 'app-list' && (
         <footer className="footer-toolbar">
           <div className="search-box">
             <Search size={18} className="search-icon" style={{ color: 'var(--text-muted)' }} />
@@ -638,10 +637,16 @@ export default function Home() {
                 Removing essential system files could cause device instability or boot loops. Proceed with care.
               </div>
             </div>
+            {criticalSelected.length > 0 && (
+              <div className="warning-banner critical-banner">
+                <strong>Critical packages selected ({criticalSelected.length}):</strong> removing these is
+                very likely to break your device. They are highlighted in red below.
+              </div>
+            )}
             <p>You have selected <strong>{selectedPackages.size}</strong> package(s) for removal:</p>
             <div className="confirm-packages-list">
               {Array.from(selectedPackages).map((pkg) => (
-                <div key={pkg} className="confirm-pkg-item">
+                <div key={pkg} className={`confirm-pkg-item ${isCriticalPackage(pkg) ? 'critical' : ''}`}>
                   <strong>{getFriendlyName(pkg)}</strong> ({pkg})
                 </div>
               ))}
